@@ -10,6 +10,8 @@ import java.util.Set;
 public class VoxyMixinPlugin implements IMixinConfigPlugin {
     private static final String IRIS_CLASS = "net.irisshaders.iris.Iris";
     private static final String IRIS_API_CLASS = "net.irisshaders.iris.api.v0.IrisApi";
+    private static final String SODIUM_CLASS = "net.caffeinemc.mods.sodium.client.SodiumClientMod";
+    private static final String SODIUM_WORLD_RENDERER_CLASS = "net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer";
     private static final String EMBEDDIUM_CLASS = "org.embeddedt.embeddium.impl.Embeddium";
     private static final String EMBEDDIUM_PRELAUNCH_CLASS = "org.embeddedt.embeddium.impl.EmbeddiumPreLaunch";
 
@@ -24,6 +26,9 @@ public class VoxyMixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.contains(".mixin.sodium.")) {
+            return isLoadedOrPresent("sodium", SODIUM_CLASS, SODIUM_WORLD_RENDERER_CLASS);
+        }
         if (mixinClassName.contains(".mixin.embeddium.")) {
             // NeoForge mixin plugin runs very early. ModList can be unavailable at that time, so also
             // fall back to class presence checks.

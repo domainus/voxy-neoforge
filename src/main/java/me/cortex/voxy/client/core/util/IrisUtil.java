@@ -6,15 +6,21 @@ import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.shadows.ShadowRenderer;
-import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
 
 import java.io.IOException;
 
 public class IrisUtil {
 
-    public record CapturedViewportParameters(ChunkRenderMatrices matrices, double x, double y, double z) {
+    public record CapturedViewportParameters(Matrix4fc projection, Matrix4fc modelView, double x, double y, double z) {
+        public CapturedViewportParameters {
+            projection = new Matrix4f(projection);
+            modelView = new Matrix4f(modelView);
+        }
+
         public void apply(VoxyRenderSystem vrs) {
-            vrs.setupViewport(this.matrices.projection(), this.matrices.modelView(), this.x, this.y, this.z);
+            vrs.setupViewport(this.projection, this.modelView, this.x, this.y, this.z);
         }
     }
 

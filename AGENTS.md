@@ -5,7 +5,7 @@
 NeoForge 1.21.1 port of the Voxy LOD mod (originally Fabric/MCRcortex).
 
 **Target Platform**: NeoForge 21.1.x for Minecraft 1.21.1
-**Active branch**: `embeddium-compat` (off `neoforge-1.21.1`)
+**Active branch**: `embeddium-compat` (off `neoforge-1.21.1`, now migrating to Sodium-primary renderer support)
 **Primary test target**: Craftoria modpack on Windows gaming laptop via SSH
 
 ---
@@ -19,7 +19,7 @@ NeoForge 1.21.1 port of the Voxy LOD mod (originally Fabric/MCRcortex).
 ```
 .reference/
 ├── minecraft/1.21.1/decompiled/     # MC 1.21.1 decompiled sources
-├── embeddium/                        # Embeddium 1.0.x sources (mc1.21.1)
+├── sodium/                           # Primary renderer reference: Sodium 1.21.1/stable sources
 ├── iris-repo/                        # Iris source (common/src/main/java/...)
 ├── iris-1.7.3+1.21/                  # Iris 1.7.3 tagged source
 ├── photon-voxy-pack/shaders/         # Photon main voxy shaders (voxy.json, voxy_opaque.glsl, voxy_translucent.glsl)
@@ -31,7 +31,7 @@ NeoForge 1.21.1 port of the Voxy LOD mod (originally Fabric/MCRcortex).
 
 **Process**:
 1. Identify the issue (mixin signature, API change, shader uniform, etc.)
-2. Search `.reference/` for actual source code
+2. Search `.reference/sodium/` first for renderer internals, then use other references as needed
 3. Verify method signatures, class structures, field types
 4. Apply fix based on **verified evidence** — no guessing
 5. Document evidence in commit/comments
@@ -55,6 +55,9 @@ Before modifying any file:
 | EuphoriaPatcher | `EuphoriaPatcher-1.7.8-r5.6.1-neoforge` |
 | Active shader pack | Complementary Reimagined r5.6.1 + EuphoriaPatcher 1.7.8 |
 | NeoForge | 21.1.115 |
+
+**Primary renderer reference**: `.reference/sodium/` tracks Sodium `1.21.1/stable` and is the first source of truth for renderer internals.
+**Embeddium status**: Craftoria still deploys Embeddium at runtime, but this branch now treats it as a secondary compatibility target rather than the primary renderer design reference.
 
 **Note on Monocle**: Monocle is NOT a separate render mod — it is the NeoForge bootstrap layer that wraps Iris. `iris-neoforge-1.8.12+mc1.21.1.jar` is loaded via Monocle. Monocle's `ShaderTransformer` rewrites Iris shader sources and requires shader packs to use `mc_midTexCoord` (not `iris_MidTex` directly) in vertex shaders.
 
@@ -240,5 +243,5 @@ Scripts in `./scripts/`:
 2. **Access wideners**: `.accesswidener` → `accesstransformer.cfg`
 3. **Dependencies**: Must be explicitly declared in `neoforge.mods.toml`
 4. **Entrypoints**: Fabric entrypoints don't work on NeoForge
-5. **Mixin remapping**: NeoForge uses SRG; Iris/Embeddium mixins need `remap = false`
+5. **Mixin remapping**: NeoForge uses SRG; Iris/Sodium/Embeddium mixins need `remap = false`
 6. **Forgified Fabric API**: mod ID is `fabric_api`; bundles `forgified-fabric-loader` via JarJar

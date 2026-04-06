@@ -21,6 +21,15 @@ public final class RendererCompatManager {
 
     private static RendererCompat load() {
         try {
+            if (ModCompat.isModLoaded("sodium") || ModCompat.isClassPresent("net.caffeinemc.mods.sodium.client.SodiumClientMod")) {
+                return (RendererCompat) Class.forName("me.cortex.voxy.client.compat.SodiumCompat")
+                        .getDeclaredConstructor()
+                        .newInstance();
+            }
+        } catch (Throwable ignored) {
+        }
+
+        try {
             if (ModCompat.isModLoaded("embeddium")) {
                 return (RendererCompat) Class.forName("me.cortex.voxy.client.compat.EmbeddiumCompat")
                         .getDeclaredConstructor()

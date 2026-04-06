@@ -17,15 +17,14 @@ base {
 sourceSets {
     main {
         java {
-            // Iris shader integration (enabled for NeoForge + Embeddium)
+            // Iris shader integration remains enabled on NeoForge.
 
-            // Sodium integrations removed for Embeddium-only branch
+            // Sodium is now the primary renderer path, but the old Sodium config UI scaffolding
+            // is still incomplete on this branch, so those files stay excluded for now.
             exclude 'me/cortex/voxy/client/config/SodiumConfigBuilder.java'
             exclude 'me/cortex/voxy/client/config/VoxyConfigMenu.java'
             exclude 'me/cortex/voxy/client/config/IConfigPageSetter.java'
             exclude 'me/cortex/voxy/client/config/VoxySodiumOptions.java'
-            exclude 'me/cortex/voxy/client/compat/SodiumCompat.java'
-            exclude 'me/cortex/voxy/client/mixin/sodium/**'
 
             // ModMenu integration (Fabric-only)
             exclude 'me/cortex/voxy/client/config/ModMenuIntegration.java'
@@ -169,7 +168,10 @@ dependencies {
     // To change the versions see the gradle.properties file
     implementation "net.neoforged:neoforge:${project.neoforge_version}"
 
-    // Embeddium for NeoForge (compile-only; runtime provided by user/modpack)
+    // Sodium is the primary renderer target for this branch.
+    compileOnly "maven.modrinth:sodium:mc1.21.1-0.6.13-neoforge"
+
+    // Embeddium remains as a secondary compatibility target where APIs still line up.
     compileOnly "maven.modrinth:embeddium:${project.embeddium_version}"
     compileOnly "maven.modrinth:iris:${project.iris_version}"
 

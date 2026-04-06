@@ -31,7 +31,7 @@ You might wonder: "Why not just use the Fabric version with [Sinytra Connector](
 | **Mod Integration** | Native NeoForge API calls | Fabric API emulation via FFAPI |
 | **Maintenance** | Must track upstream Voxy changes | Just drop in Fabric jar |
 | **Stability** | Tested against NeoForge directly | May have edge cases from translation |
-| **Dependencies** | Embeddium | Connector + Forgified Fabric API |
+| **Dependencies** | Sodium primary, Embeddium secondary | Connector + Forgified Fabric API |
 
 **Bottom line:** For a performance-critical LOD mod like Voxy, eliminating the translation layer overhead is worthwhile. If you prioritize simplicity and don't mind potential overhead, Sinytra Connector is a valid alternative.
 
@@ -47,25 +47,28 @@ You might wonder: "Why not just use the Fabric version with [Sinytra Connector](
 - Delayed chunk unloading to prevent pop-out effects
 
 ### Current Limitations
-- Requires Embeddium 1.0.x (NeoForge version)
-- Some optional integrations not yet ported (Iris, Nvidium, Vivecraft)
+- Requires a supported renderer mod. Sodium is the primary target; Embeddium is kept as a secondary compatibility path where APIs still align.
+- Some optional integrations not yet ported (Nvidium, Vivecraft)
 - Debug screen integration disabled (MC 1.21.1 API changes)
 
 ## Requirements
 
 ### Required Dependencies
 
+Install one supported renderer:
+
 | Dependency | Version | Link |
 |------------|---------|------|
 | Minecraft | 1.21.1 | - |
 | NeoForge | 21.1.115+ | [NeoForge](https://neoforged.net/) |
-| Embeddium | 1.0.x (mc1.21.1) | [Modrinth](https://modrinth.com/mod/embeddium) |
+| Sodium | mc1.21.1-0.6.13-neoforge | [Modrinth](https://modrinth.com/mod/sodium) |
+| Embeddium | 1.0.15+mc1.21.1 | [Modrinth](https://modrinth.com/mod/embeddium) |
 
 ### Recommended Dependencies
 
 | Dependency | Purpose | Link |
 |------------|---------|------|
-| Reese's Sodium Options | Better settings UI for Embeddium (if available) | [Modrinth](https://modrinth.com/mod/reeses-sodium-options) |
+| Reese's Sodium Options | Better settings UI for Sodium-compatible option pages (if available) | [Modrinth](https://modrinth.com/mod/reeses-sodium-options) |
 | Lithium | General performance improvements | [Modrinth](https://modrinth.com/mod/lithium) |
 
 ## Installation
@@ -73,7 +76,7 @@ You might wonder: "Why not just use the Fabric version with [Sinytra Connector](
 > **Note:** Due to Voxy's ARR (All Rights Reserved) license, compiled JARs are not distributed. You must build from source.
 
 1. Install NeoForge for Minecraft 1.21.1
-2. Install required dependencies (see above)
+2. Install NeoForge and one supported renderer dependency from the table above
 3. Build Voxy from source (see below)
 4. Place the built JAR in your `mods` folder
 
@@ -86,6 +89,11 @@ cd voxy-neoforge
 ```
 
 The built JAR will be in `build/libs/`.
+
+## Development References
+
+Renderer work in this repo should use `.reference/sodium/` as the primary reference checkout for Sodium `1.21.1/stable`.
+Embeddium remains a secondary compatibility reference when NeoForge-specific API differences need to be checked.
 
 ## Contributing
 

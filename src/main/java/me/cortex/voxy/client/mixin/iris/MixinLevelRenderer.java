@@ -8,7 +8,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.LevelRenderer;
-import org.embeddedt.embeddium.impl.render.chunk.ChunkRenderMatrices;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -40,7 +39,7 @@ public class MixinLevelRenderer {
                 glViewport(0,0,Minecraft.getInstance().getMainRenderTarget().width, Minecraft.getInstance().getMainRenderTarget().height);
 
                 var pos = camera.getPosition();
-                IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = new IrisUtil.CapturedViewportParameters(new ChunkRenderMatrices(projectionMatrix, frustumMatrix), pos.x, pos.y, pos.z);
+                IrisUtil.CAPTURED_VIEWPORT_PARAMETERS = new IrisUtil.CapturedViewportParameters(projectionMatrix, frustumMatrix, pos.x, pos.y, pos.z);
                 // Keep Voxy matrices current for this render frame before Iris uniform evaluation.
                 renderer.setupViewport(projectionMatrix, frustumMatrix, pos.x, pos.y, pos.z);
             }

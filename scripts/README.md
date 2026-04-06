@@ -124,6 +124,37 @@ Usage examples:
 - BlockableEventLoop.isNonRecoverable() InvalidMixinException
 - Any @Shadow/@Inject targeting non-existent methods
 
+### pull_latest_log.sh
+
+**Purpose:** Copies the Prism Launcher `latest.log` for the local `1.21.1` instance into the repo so debugging tools can analyze a stable snapshot.
+
+**Default source path:**
+`/var/home/ryan/.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher/run/media/system/Warp_Core_Gamma/PrismaLauncher/instances/1.21.1/minecraft/logs/latest.log`
+
+**Usage:**
+```bash
+# Copy into the default repo-local snapshot path
+bash scripts/pull_latest_log.sh
+
+# Copy into a custom destination
+bash scripts/pull_latest_log.sh .tmp/logs/latest-custom.log
+```
+
+**Default destination:** `.tmp/logs/latest-1.21.1.log`
+
+**Recommended debugging workflow:**
+```bash
+# Snapshot the latest launcher log
+bash scripts/pull_latest_log.sh
+
+# Run the existing triage helpers on the snapshot
+bash scripts/voxy_log_triage.sh .tmp/logs/latest-1.21.1.log
+bash scripts/voxy_churn_diagnose.sh .tmp/logs/latest-1.21.1.log
+bash scripts/perf_latest_summary.sh .tmp/logs/latest-1.21.1.log
+```
+
+**Test hook:** Set `VOXY_PULL_LATEST_LOG_SOURCE=/path/to/latest.log` to override the source path for automated tests.
+
 ### perf_latest_summary.sh
 
 **Purpose:** Reads `latest.log` and summarizes the newest `VOXY_PERF` counters for upload pressure, async copy draining, and world section array reuse.
@@ -210,8 +241,11 @@ find .reference/minecraft/1.21.1/decompiled -name "TargetClass.java"
 # 2. Verify method exists
 grep -A 10 "targetMethod" .reference/minecraft/1.21.1/decompiled/path/to/TargetClass.java
 
-# 3. Check Embeddium's implementation
-grep -r "@Mixin.*TargetClass" .reference/embeddium/
+# 3. Check Sodium's implementation first
+grep -r "@Mixin.*TargetClass" .reference/sodium/
+
+# 4. If NeoForge compatibility differs, compare the Embeddium path second
+# grep -r "@Mixin.*TargetClass" .reference/embeddium/
 ```
 
 ### After Modifying Mixin Configs

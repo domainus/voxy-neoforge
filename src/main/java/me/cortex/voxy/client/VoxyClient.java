@@ -5,7 +5,6 @@ import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.client.core.gl.Capabilities;
 import me.cortex.voxy.client.core.model.bakery.BudgetBufferRenderer;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
-import me.cortex.voxy.client.compat.EmbeddiumOptionsCompatManager;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.minecraft.ChatFormatting;
@@ -57,7 +56,6 @@ public class VoxyClient {
             Logger.error("Voxy is unsupported on your system.");
         }
 
-        EmbeddiumOptionsCompatManager.register();
     }
 
     /**
@@ -84,5 +82,9 @@ public class VoxyClient {
 
     public static boolean disableEmbeddiumChunkRender() {
         return false;// getOcclusionDebugState() != 0;
+    }
+
+    public static boolean disableRendererChunkRender() {
+        return disableEmbeddiumChunkRender();
     }
 }

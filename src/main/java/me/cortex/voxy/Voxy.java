@@ -27,7 +27,8 @@ public class Voxy {
             // Register the built-in NeoForge config screen
             container.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
 
-            // Embeddium is the supported renderer integration for this branch.
+            // Renderer-specific hooks are discovered at runtime. Sodium is the
+            // primary integration target, with Embeddium kept as a secondary path.
         }
     }
 }
