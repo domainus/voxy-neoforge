@@ -26,8 +26,6 @@ import static org.lwjgl.opengl.GL45C.*;
 public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
     private static final boolean ENABLE_IRIS_TEMPORAL_PASS =
             System.getProperty("voxy.irisTemporalPass", "false").equalsIgnoreCase("true");
-    private static final boolean ENABLE_GLSL_COMPAT_FIXES =
-            System.getProperty("voxy.irisGlslCompatFixes", "false").equalsIgnoreCase("true");
     // Depth bridging into vanilla can occlude late translucent effects (clouds/particles/aurora)
     // with distant LOD depth. Keep it opt-in for shader-pack stability.
     private static final boolean COPY_DEPTH_TO_VANILLA =
@@ -255,7 +253,7 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
     public void addDebug(List<String> debug) {
         debug.add("Using: " + this.getClass().getSimpleName());
         debug.add("Iris temporal pass: " + (ENABLE_IRIS_TEMPORAL_PASS ? "enabled" : "disabled"));
-        debug.add("Iris GLSL compat fixes: " + (ENABLE_GLSL_COMPAT_FIXES ? "enabled" : "disabled"));
+        debug.add("Iris GLSL compat fixes: " + IrisGlslCompat.mode());
         debug.add("Iris depth bridge: " + (COPY_DEPTH_TO_VANILLA
                 ? (COPY_TRANSLUCENT_DEPTH_TO_VANILLA ? "translucent" : "opaque-only")
                 : "disabled"));
@@ -302,12 +300,10 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
      */
     private static String applyGlslCompatFixes(String source) {
         if (source == null) return null;
-        if (!ENABLE_GLSL_COMPAT_FIXES) return source;
+        if (!IrisGlslCompat.shouldApplyFixes(source)) return source;
         // shadow2D() was removed in GLSL 1.40; replace with texture() which is the modern equivalent.
         // This handles packs like BSL whose included lighting libs still use the deprecated form.
-        source = source.replace("shadow2D(", "texture(");
-        source = source.replace("shadow2DLod(", "textureLod(");
-        return source;
+        return IrisGlslCompat.applyFixes(source);
     }
 
     private boolean opaquePatchLogged = false;
@@ -326,10 +322,12 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
         }
         builder.append(opaquePatch);
 
-        String result = applyGlslCompatFixes(builder.toString());
-        if (ENABLE_GLSL_COMPAT_FIXES && !this.glslCompatLogPrinted) {
+        String source = builder.toString();
+        boolean compatFixesApplied = IrisGlslCompat.shouldApplyFixes(source);
+        String result = applyGlslCompatFixes(source);
+        if (compatFixesApplied && !this.glslCompatLogPrinted) {
             this.glslCompatLogPrinted = true;
-            me.cortex.voxy.common.Logger.warn("[IrisVoxyRenderPipeline] GLSL compatibility rewrites enabled via -Dvoxy.irisGlslCompatFixes=true (shadow2D/shadow2DLod replacement)");
+            me.cortex.voxy.common.Logger.warn("[IrisVoxyRenderPipeline] GLSL compatibility rewrites active (mode=" + IrisGlslCompat.mode() + ", shadow2D/shadow2DLod replacement)");
         }
         if (!this.opaquePatchLogged) {
             this.opaquePatchLogged = true;
