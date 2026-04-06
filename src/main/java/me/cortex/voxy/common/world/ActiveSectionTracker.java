@@ -10,7 +10,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.StampedLock;
 
 public class ActiveSectionTracker {
@@ -180,16 +179,10 @@ public class ActiveSectionTracker {
         } else {
             //TODO: mark the time the loading started in nanos, then here if it has been a while, spin lock, else jump back to the executing service and do work
             VarHandle.fullFence();
-            int spinCount = 0;
             while ((section = holder.obj) == null) {
                 VarHandle.fullFence();
-                if (spinCount < 64) {
-                    Thread.onSpinWait();
-                } else {
-                    // Back off to avoid burning CPU while waiting on IO-heavy section loads.
-                    LockSupport.parkNanos(50_000L);
-                }
-                spinCount++;
+                Thread.onSpinWait();
+                Thread.yield();
             }
 
             //Try to acquire a pre lock
@@ -211,14 +204,14 @@ public class ActiveSectionTracker {
         }
     }
 
-    void tryUnload(WorldSection section) {
+    void tryUnload(WorldSection section, int hints) {
         if (this.engine != null) this.engine.lastActiveTime = System.currentTimeMillis();
         if (section.isDirty&&this.engine!=null) {
             if (section.tryAcquire()) {
                 if (section.setNotDirty()) {//If the section is dirty we must enqueue for saving
-                    this.engine.saveSection(section);
+                    this.engine.saveSection(section);//can block
                 }
-                section.release(false);//Special
+                section.release(false, hints);//Special
             }
         }
 
@@ -236,9 +229,9 @@ public class ActiveSectionTracker {
                 if (section.tryAcquire()) {
                     if (section.setNotDirty()) {//If the section is dirty we must enqueue for saving
                         if (this.engine != null)
-                            this.engine.saveSection(section);
+                            this.engine.saveSection(section, true);//not allowed to block as we are in a lock
                     }
-                    section.release(false);//Special
+                    section.release(false, hints);//Special
                 } else {
                     throw new IllegalStateException("Section was dirty but is also unloaded, this is very bad");
                 }
