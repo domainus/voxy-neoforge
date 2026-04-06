@@ -11,7 +11,6 @@
     "minecraft.MixinClientLevel",
     "minecraft.MixinClientPacketListener",
     "minecraft.MixinFogRenderer",
-    "minecraft.MixinLayerLightSectionStorage",
     "minecraft.MixinLevelRenderer",
     "minecraft.MixinLevelRendererClouds",
     "minecraft.MixinMinecraft",
@@ -30,7 +29,6 @@
     "iris.MixinIrisSamplers",
     "iris.MixinLevelRenderer",
     "iris.MixinMatrixUniforms",
-    "iris.MixinPackRenderTargetDirectives",
     "iris.MixinProgramSet",
     "iris.MixinShaderPackSourceNames",
     "iris.MixinStandardMacros"

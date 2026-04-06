@@ -65,6 +65,45 @@ public class GlTexture extends TrackedObject {
         return view;
     }
 
+    public GlTexture zero() {
+        this.assertAllocated();
+
+        final int clearFormat;
+        final int clearType;
+        switch (this.format) {
+            case GL_RGBA8 -> {
+                clearFormat = GL_RGBA;
+                clearType = GL_UNSIGNED_BYTE;
+            }
+            case GL_R32UI -> {
+                clearFormat = GL_RED_INTEGER;
+                clearType = GL_UNSIGNED_INT;
+            }
+            case GL_R32F -> {
+                clearFormat = GL_RED;
+                clearType = GL_FLOAT;
+            }
+            case GL_DEPTH24_STENCIL8 -> {
+                clearFormat = GL_DEPTH_STENCIL;
+                clearType = GL_UNSIGNED_INT_24_8;
+            }
+            case GL_DEPTH_COMPONENT24 -> {
+                clearFormat = GL_DEPTH_COMPONENT;
+                clearType = GL_UNSIGNED_INT;
+            }
+            case GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT32 -> {
+                clearFormat = GL_DEPTH_COMPONENT;
+                clearType = GL_FLOAT;
+            }
+            default -> throw new IllegalStateException("Unsupported texture clear format: " + this.format);
+        }
+
+        for (int level = 0; level < this.levels; level++) {
+            glClearTexImage(this.id, level, clearFormat, clearType, (java.nio.ByteBuffer) null);
+        }
+        return this;
+    }
+
     @Override
     public void free() {
         if (this.hasAllocated) {

@@ -7,9 +7,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 //Represents a loaded world section at a specific detail level
 // holds a 32x32x32 region of detail
@@ -39,15 +37,9 @@ public final class WorldSection {
 
     //TODO: should make it dynamically adjust the size allowance based on memory pressure/WorldSection allocation rate (e.g. is it doing a world import)
     private static final int ARRAY_REUSE_CACHE_SIZE = 400;//500;//32*32*32*8*ARRAY_REUSE_CACHE_SIZE == number of bytes
+    //TODO: maybe just swap this to a ConcurrentLinkedDeque
     private static final AtomicInteger ARRAY_REUSE_CACHE_COUNT = new AtomicInteger(0);
     private static final ConcurrentLinkedDeque<long[]> ARRAY_REUSE_CACHE = new ConcurrentLinkedDeque<>();
-    private static final boolean LOG_REUSE_STATS = VoxyCommon.isVerificationFlagOn("worldSectionReusePerfLog", true);
-    private static final long REUSE_LOG_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(15);
-    private static final AtomicLong NEXT_REUSE_LOG_NANOS = new AtomicLong(System.nanoTime() + REUSE_LOG_INTERVAL_NANOS);
-    private static final AtomicLong CACHE_HITS = new AtomicLong();
-    private static final AtomicLong CACHE_MISSES = new AtomicLong();
-    private static final AtomicLong CACHE_OFFERS = new AtomicLong();
-    private static final AtomicLong CACHE_REJECTS = new AtomicLong();
 
 
     public final int lvl;
@@ -79,18 +71,12 @@ public final class WorldSection {
         this.key = WorldEngine.getWorldSectionId(lvl, x, y, z);
         this.tracker = tracker;
 
-        this.data = ARRAY_REUSE_CACHE.pollFirst();
+        this.data = ARRAY_REUSE_CACHE.poll();
         if (this.data == null) {
             this.data = new long[32 * 32 * 32];
-            CACHE_MISSES.incrementAndGet();
         } else {
-            int count = ARRAY_REUSE_CACHE_COUNT.decrementAndGet();
-            if (count < 0) {
-                ARRAY_REUSE_CACHE_COUNT.compareAndSet(count, 0);
-            }
-            CACHE_HITS.incrementAndGet();
+            ARRAY_REUSE_CACHE_COUNT.decrementAndGet();
         }
-        maybeLogReuseStats();
     }
 
     void primeForReuse() {
@@ -145,12 +131,18 @@ public final class WorldSection {
         return ((int)ATOMIC_STATE_HANDLE.get(this))>>1;
     }
 
-    //TODO: add the ability to hint to the tracker that yes the section is unloaded, try to cache it in a secondary cache since it will be reused/needed later
     public int release() {
-        return release(true);
+        return release(true, 0);
     }
 
-    int release(boolean unload) {
+
+    public static int RELEASE_HINT_POSSIBLE_REUSE = 1;
+    //Unload but specify possible reuse hints
+    public int release(int hints) {
+        return release(true, hints);
+    }
+
+    int release(boolean unload, int hints) {
         int state = ((int) ATOMIC_STATE_HANDLE.getAndAdd(this, -2)) - 2;
         if (state < 1) {
             throw new IllegalStateException("Section got into an invalid state");
@@ -160,7 +152,7 @@ public final class WorldSection {
         }
         if ((state>>1)==0 && unload) {
             if (this.tracker != null) {
-                this.tracker.tryUnload(this);
+                this.tracker.tryUnload(this, hints);
             } else {
                 //This should _ONLY_ ever happen when its an untracked section
                 // If it is, try release it
@@ -178,6 +170,9 @@ public final class WorldSection {
         if ((witness & 1) == 0 && witness != 0) {
             throw new IllegalStateException("Section marked as free but has refs");
         }
+        if (witness == 1 && (this.isDirty || this.inSaveQueue)) {
+            throw new IllegalStateException("Section freed while marked as dirty or in the save queue");
+        }
         return witness == 1;
     }
 
@@ -185,55 +180,11 @@ public final class WorldSection {
         if (VERIFY_WORLD_SECTION_EXECUTION && this.data == null) {
             throw new IllegalStateException();
         }
-        CACHE_OFFERS.incrementAndGet();
-        boolean accepted = false;
-        while (true) {
-            int count = ARRAY_REUSE_CACHE_COUNT.get();
-            if (count >= ARRAY_REUSE_CACHE_SIZE) {
-                break;
-            }
-            if (ARRAY_REUSE_CACHE_COUNT.compareAndSet(count, count + 1)) {
-                ARRAY_REUSE_CACHE.addFirst(this.data);
-                accepted = true;
-                break;
-            }
-        }
-        if (!accepted) {
-            CACHE_REJECTS.incrementAndGet();
+        if (ARRAY_REUSE_CACHE_COUNT.get() < ARRAY_REUSE_CACHE_SIZE) {
+            ARRAY_REUSE_CACHE.add(this.data);
+            ARRAY_REUSE_CACHE_COUNT.incrementAndGet();
         }
         this.data = null;
-        maybeLogReuseStats();
-    }
-
-    private static void maybeLogReuseStats() {
-        if (!LOG_REUSE_STATS) {
-            return;
-        }
-        long now = System.nanoTime();
-        long next = NEXT_REUSE_LOG_NANOS.get();
-        if (now < next) {
-            return;
-        }
-        if (!NEXT_REUSE_LOG_NANOS.compareAndSet(next, now + REUSE_LOG_INTERVAL_NANOS)) {
-            return;
-        }
-
-        long hits = CACHE_HITS.get();
-        long misses = CACHE_MISSES.get();
-        long offers = CACHE_OFFERS.get();
-        long rejects = CACHE_REJECTS.get();
-        long allocs = hits + misses;
-        long hitPctTimes100 = allocs == 0 ? 0 : (hits * 10_000L) / allocs;
-        me.cortex.voxy.common.Logger.info(
-                "VOXY_PERF world_section_cache",
-                "pool_size=" + ARRAY_REUSE_CACHE_COUNT.get(),
-                "allocations=" + allocs,
-                "hits=" + hits,
-                "misses=" + misses,
-                "offers=" + offers,
-                "rejects=" + rejects,
-                "hit_pct=" + (hitPctTimes100 / 100) + "." + String.format("%02d", hitPctTimes100 % 100)
-        );
     }
 
 
@@ -256,6 +207,7 @@ public final class WorldSection {
     }
 
     public long set(int x, int y, int z, long id) {
+        //TODO: this needs to update the block counts
         int idx = getIndex(x,y,z);
         long old = this.data[idx];
         this.data[idx] = id;

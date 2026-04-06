@@ -14,108 +14,167 @@ public class VoxyConfig {
 
     public static final VoxyConfig CONFIG = new VoxyConfig();
 
+    public boolean enabled;
+    public boolean enableRendering;
+    public boolean ingestEnabled;
+    public float sectionRenderDistance;
+    public boolean cameraDistanceCulling;
+    public boolean visibilityCulling;
+    public int serviceThreads;
+    public float subDivisionSize;
+    public boolean useEnvironmentalFog;
+    public boolean shaderPackFogOverride;
+    public boolean dontUseEmbeddiumBuilderThreads;
+    public boolean dontUseSodiumBuilderThreads;
+    public int earthCurveRatio;
+
     private VoxyConfig() {
-        // Singleton - use CONFIG instance
+        this.refreshFromBackend();
+    }
+
+    private void refreshFromBackend() {
+        this.enabled = VoxyNeoForgeConfig.isEnabled();
+        this.enableRendering = VoxyNeoForgeConfig.isRenderingEnabled();
+        this.ingestEnabled = VoxyNeoForgeConfig.isIngestEnabled();
+        this.sectionRenderDistance = VoxyNeoForgeConfig.getSectionRenderDistance();
+        this.cameraDistanceCulling = VoxyNeoForgeConfig.isCameraDistanceCullingEnabled();
+        this.visibilityCulling = VoxyNeoForgeConfig.isVisibilityCullingEnabled();
+        this.serviceThreads = VoxyNeoForgeConfig.getServiceThreads();
+        this.subDivisionSize = VoxyNeoForgeConfig.getSubDivisionSize();
+        this.useEnvironmentalFog = VoxyNeoForgeConfig.useEnvironmentalFog();
+        this.shaderPackFogOverride = VoxyNeoForgeConfig.enableShaderPackFogOverride();
+        this.dontUseEmbeddiumBuilderThreads = VoxyNeoForgeConfig.dontUseEmbeddiumBuilderThreads();
+        this.dontUseSodiumBuilderThreads = this.dontUseEmbeddiumBuilderThreads;
+        this.earthCurveRatio = VoxyNeoForgeConfig.getEarthCurveRatio();
+    }
+
+    private void pushToBackend() {
+        VoxyNeoForgeConfig.setEnabled(this.enabled);
+        VoxyNeoForgeConfig.setRenderingEnabled(this.enableRendering);
+        VoxyNeoForgeConfig.setIngestEnabled(this.ingestEnabled);
+        VoxyNeoForgeConfig.setSectionRenderDistance(Math.round(this.sectionRenderDistance));
+        VoxyNeoForgeConfig.setCameraDistanceCullingEnabled(this.cameraDistanceCulling);
+        VoxyNeoForgeConfig.setVisibilityCullingEnabled(this.visibilityCulling);
+        VoxyNeoForgeConfig.setServiceThreads(this.serviceThreads);
+        VoxyNeoForgeConfig.setSubDivisionSize(this.subDivisionSize);
+        VoxyNeoForgeConfig.setUseEnvironmentalFog(this.useEnvironmentalFog);
+        VoxyNeoForgeConfig.setShaderPackFogOverride(this.shaderPackFogOverride);
+        this.dontUseEmbeddiumBuilderThreads = this.dontUseSodiumBuilderThreads;
+        VoxyNeoForgeConfig.setDontUseEmbeddiumBuilderThreads(this.dontUseEmbeddiumBuilderThreads);
+        VoxyNeoForgeConfig.setEarthCurveRatio(this.earthCurveRatio);
     }
 
     // ========== Delegated Getters ==========
 
     public boolean isEnabled() {
-        return VoxyNeoForgeConfig.isEnabled();
+        this.refreshFromBackend();
+        return this.enabled;
     }
 
     public boolean isRenderingEnabled() {
-        return VoxyCommon.isAvailable() && isEnabled() && VoxyNeoForgeConfig.isRenderingEnabled();
+        this.refreshFromBackend();
+        return VoxyCommon.isAvailable() && this.enabled && this.enableRendering;
     }
 
     public boolean isIngestEnabled() {
-        return VoxyNeoForgeConfig.isIngestEnabled();
+        this.refreshFromBackend();
+        return this.ingestEnabled;
     }
 
     public int getSectionRenderDistance() {
-        return VoxyNeoForgeConfig.getSectionRenderDistance();
+        this.refreshFromBackend();
+        return Math.round(this.sectionRenderDistance);
     }
 
     public boolean isCameraDistanceCullingEnabled() {
-        return VoxyNeoForgeConfig.isCameraDistanceCullingEnabled();
+        this.refreshFromBackend();
+        return this.cameraDistanceCulling;
     }
 
     public boolean isVisibilityCullingEnabled() {
-        return VoxyNeoForgeConfig.isVisibilityCullingEnabled();
+        this.refreshFromBackend();
+        return this.visibilityCulling;
     }
 
     public int getServiceThreads() {
-        return VoxyNeoForgeConfig.getServiceThreads();
+        this.refreshFromBackend();
+        return this.serviceThreads;
     }
 
     public float getSubDivisionSize() {
-        return VoxyNeoForgeConfig.getSubDivisionSize();
+        this.refreshFromBackend();
+        return this.subDivisionSize;
     }
 
     public boolean useEnvironmentalFog() {
-        return VoxyNeoForgeConfig.useEnvironmentalFog();
+        this.refreshFromBackend();
+        return this.useEnvironmentalFog;
     }
 
     public boolean enableShaderPackFogOverride() {
-        return VoxyNeoForgeConfig.enableShaderPackFogOverride();
+        this.refreshFromBackend();
+        return this.shaderPackFogOverride;
     }
 
     public boolean dontUseEmbeddiumBuilderThreads() {
-        return VoxyNeoForgeConfig.dontUseEmbeddiumBuilderThreads();
+        this.refreshFromBackend();
+        return this.dontUseEmbeddiumBuilderThreads;
     }
 
     public int getEarthCurveRatio() {
-        return VoxyNeoForgeConfig.getEarthCurveRatio();
+        this.refreshFromBackend();
+        return this.earthCurveRatio;
     }
 
     // ========== Delegated Setters ==========
 
     public void setEnabled(boolean value) {
-        VoxyNeoForgeConfig.setEnabled(value);
+        this.enabled = value;
     }
 
     public void setRenderingEnabled(boolean value) {
-        VoxyNeoForgeConfig.setRenderingEnabled(value);
+        this.enableRendering = value;
     }
 
     public void setIngestEnabled(boolean value) {
-        VoxyNeoForgeConfig.setIngestEnabled(value);
+        this.ingestEnabled = value;
     }
 
     public void setSectionRenderDistance(int value) {
-        VoxyNeoForgeConfig.setSectionRenderDistance(value);
+        this.sectionRenderDistance = value;
     }
 
     public void setCameraDistanceCullingEnabled(boolean value) {
-        VoxyNeoForgeConfig.setCameraDistanceCullingEnabled(value);
+        this.cameraDistanceCulling = value;
     }
 
     public void setVisibilityCullingEnabled(boolean value) {
-        VoxyNeoForgeConfig.setVisibilityCullingEnabled(value);
+        this.visibilityCulling = value;
     }
 
     public void setServiceThreads(int value) {
-        VoxyNeoForgeConfig.setServiceThreads(value);
+        this.serviceThreads = value;
     }
 
     public void setSubDivisionSize(float value) {
-        VoxyNeoForgeConfig.setSubDivisionSize(value);
+        this.subDivisionSize = value;
     }
 
     public void setUseEnvironmentalFog(boolean value) {
-        VoxyNeoForgeConfig.setUseEnvironmentalFog(value);
+        this.useEnvironmentalFog = value;
     }
 
     public void setShaderPackFogOverride(boolean value) {
-        VoxyNeoForgeConfig.setShaderPackFogOverride(value);
+        this.shaderPackFogOverride = value;
     }
 
     public void setDontUseEmbeddiumBuilderThreads(boolean value) {
-        VoxyNeoForgeConfig.setDontUseEmbeddiumBuilderThreads(value);
+        this.dontUseEmbeddiumBuilderThreads = value;
+        this.dontUseSodiumBuilderThreads = value;
     }
 
     public void setEarthCurveRatio(int value) {
-        VoxyNeoForgeConfig.setEarthCurveRatio(value);
+        this.earthCurveRatio = value;
     }
 
     // ========== Save ==========
@@ -124,6 +183,7 @@ public class VoxyConfig {
      * Save config to TOML file.
      */
     public void save() {
+        this.pushToBackend();
         VoxyNeoForgeConfig.save();
     }
 }
