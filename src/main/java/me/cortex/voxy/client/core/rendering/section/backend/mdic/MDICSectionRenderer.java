@@ -3,6 +3,7 @@ package me.cortex.voxy.client.core.rendering.section.backend.mdic;
 
 import me.cortex.voxy.client.RenderStatistics;
 import me.cortex.voxy.client.VoxyClient;
+import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.client.core.AbstractRenderPipeline;
 import me.cortex.voxy.client.core.gl.Capabilities;
 import me.cortex.voxy.client.core.gl.GlBuffer;
@@ -17,7 +18,6 @@ import me.cortex.voxy.client.core.rendering.util.DownloadStream;
 import me.cortex.voxy.client.core.rendering.util.LightMapHelper;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
-import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.world.WorldEngine;
 import net.minecraft.client.Minecraft;
@@ -51,12 +51,14 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
     private static final int STATISTICS_BUFFER_BINDING = 8;
     private final Shader terrainShader;
     private final Shader translucentTerrainShader;
+    private int missingDepthTextureLogCooldown = 0;
 
     private final Shader commandGenShader = Shader.make()
             .define("TRANSLUCENT_WRITE_BASE", 1024)
             .define("TEMPORAL_OFFSET", TEMPORAL_OFFSET)
 
             .define("TRANSLUCENT_DISTANCE_BUFFER_BINDING", 7)
+            .defineIf("DISABLE_SECTION_VISIBILITY_CULLING", !VoxyConfig.CONFIG.isVisibilityCullingEnabled())
 
             .defineIf("HAS_STATISTICS", RenderStatistics.enabled)
             .defineIf("STATISTICS_BUFFER_BINDING", RenderStatistics.enabled, STATISTICS_BUFFER_BINDING)
@@ -120,12 +122,14 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         String frag = ShaderLoader.parse("voxy:lod/gl46/quads.frag");
 
         String opaqueFrag = pipeline.patchOpaqueShader(this, frag);
+        Logger.info("[MDICSectionRenderer] patchOpaqueShader returned " + (opaqueFrag == null ? "null (no patch)" : "patched source len=" + opaqueFrag.length()));
         opaqueFrag = opaqueFrag==null?frag:opaqueFrag;
 
         //TODO: find a more robust/nicer way todo this
         this.terrainShader = tryCompilePatchedOrNormal(builder, opaqueFrag, frag);
 
         String translucentFrag = pipeline.patchTranslucentShader(this, frag);
+        Logger.info("[MDICSectionRenderer] patchTranslucentShader returned " + (translucentFrag == null ? "null (no patch)" : "patched source len=" + translucentFrag.length()));
         translucentFrag = translucentFrag==null?frag:translucentFrag;
 
         this.translucentTerrainShader = tryCompilePatchedOrNormal(builder.define("TRANSLUCENT"), translucentFrag, frag);
@@ -147,32 +151,31 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         MemoryUtil.memPutInt(ptr, viewport.frameId&0x7fffffff); ptr += 4;
         viewport.innerTranslation.getToAddress(ptr); ptr += 4*3;
 
-        // Earth curvature radius: 0 = disabled, otherwise compute radius in blocks
-        // DH uses: radius = 6371000.0 / ratio (Earth radius in meters / ratio factor)
-        // We use blocks (1 block = 1 meter), so same formula
-        int earthCurveRatio = VoxyConfig.CONFIG.earthCurveRatio;
-        float earthRadius = 0.0f;
-        if (earthCurveRatio >= 50) {
-            earthRadius = 6371000.0f / earthCurveRatio;
-        }
-        MemoryUtil.memPutFloat(ptr, earthRadius); ptr += 4;
-
         UploadStream.INSTANCE.commit();
     }
 
 
-    private void bindRenderingBuffers(MDICViewport viewport) {
+    private boolean bindRenderingBuffers(MDICViewport viewport) {
         glBindBufferBase(GL_UNIFORM_BUFFER, 0, this.uniform.id);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, this.geometryManager.getGeometryBuffer().id);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, this.geometryManager.getMetadataBuffer().id);
         this.modelStore.bind(3, 4, 0);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, viewport.positionScratchBuffer.id);
         LightMapHelper.bind(1);
-        glBindTextureUnit(2, viewport.depthBoundingBuffer.getDepthTex().id);
+        var depthTex = viewport.depthBoundingBuffer.getDepthTex();
+        if (depthTex == null) {
+            if (this.missingDepthTextureLogCooldown-- <= 0) {
+                this.missingDepthTextureLogCooldown = 120;
+                Logger.warn("[VoxyRecreate] MDIC render skipped: depth bounding texture is unavailable this frame");
+            }
+            return false;
+        }
+        glBindTextureUnit(2, depthTex.id);
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, SharedIndexBuffer.INSTANCE.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, viewport.drawCallBuffer.id);
         glBindBuffer(GL_PARAMETER_BUFFER_ARB, viewport.drawCountCallBuffer.id);
+        return true;
     }
 
     private void renderTerrain(MDICViewport viewport, long indirectOffset, long drawCountOffset, int maxDrawCount) {
@@ -182,10 +185,14 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         glDisable(GL_CULL_FACE);
         glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
         this.terrainShader.bind();
         glBindVertexArray(GlVertexArray.STATIC_VAO);//Needs to be before binding
         this.pipeline.setupAndBindOpaque(viewport);
-        this.bindRenderingBuffers(viewport);
+        if (!this.bindRenderingBuffers(viewport)) {
+            glBindVertexArray(0);
+            return;
+        }
 
         glMemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);//Barrier everything is needed
         glProvokingVertex(GL_FIRST_VERTEX_CONVENTION);
@@ -226,10 +233,15 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
         glDisable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
         this.translucentTerrainShader.bind();
         glBindVertexArray(GlVertexArray.STATIC_VAO);//Needs to be before binding
         this.pipeline.setupAndBindTranslucent(viewport);
-        this.bindRenderingBuffers(viewport);
+        if (!this.bindRenderingBuffers(viewport)) {
+            glBindVertexArray(0);
+            glDisable(GL_BLEND);
+            return;
+        }
 
         glMemoryBarrier(GL_COMMAND_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);//Barrier everything is needed
         glProvokingVertex(GL_FIRST_VERTEX_CONVENTION);
@@ -264,27 +276,29 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         }
 
         {//Test occlusion
-            this.cullShader.bind();
-            if (Capabilities.INSTANCE.repFragTest) {
-                glEnable(GL_REPRESENTATIVE_FRAGMENT_TEST_NV);
-            }
-            glBindVertexArray(GlVertexArray.STATIC_VAO);
-            glBindBufferBase(GL_UNIFORM_BUFFER, 0, this.uniform.id);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, this.geometryManager.getMetadataBuffer().id);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, viewport.visibilityBuffer.id);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, viewport.indirectLookupBuffer.id);
-            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, viewport.drawCountCallBuffer.id);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, SharedIndexBuffer.INSTANCE.id());
-            glEnable(GL_DEPTH_TEST);
-            glColorMask(false, false, false, false);
-            glDepthMask(false);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT|GL_COMMAND_BARRIER_BIT);
-            glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_BYTE, 6*4);
-            glDepthMask(true);
-            glColorMask(true, true, true, true);
-            glDisable(GL_DEPTH_TEST);
-            if (Capabilities.INSTANCE.repFragTest) {
-                glDisable(GL_REPRESENTATIVE_FRAGMENT_TEST_NV);
+            if (VoxyConfig.CONFIG.isVisibilityCullingEnabled()) {
+                this.cullShader.bind();
+                if (Capabilities.INSTANCE.repFragTest) {
+                    glEnable(GL_REPRESENTATIVE_FRAGMENT_TEST_NV);
+                }
+                glBindVertexArray(GlVertexArray.STATIC_VAO);
+                glBindBufferBase(GL_UNIFORM_BUFFER, 0, this.uniform.id);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, this.geometryManager.getMetadataBuffer().id);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, viewport.visibilityBuffer.id);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, viewport.indirectLookupBuffer.id);
+                glBindBuffer(GL_DRAW_INDIRECT_BUFFER, viewport.drawCountCallBuffer.id);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, SharedIndexBuffer.INSTANCE.id());
+                glEnable(GL_DEPTH_TEST);
+                glColorMask(false, false, false, false);
+                glDepthMask(false);
+                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT|GL_COMMAND_BARRIER_BIT);
+                glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_BYTE, 6*4);
+                glDepthMask(true);
+                glColorMask(true, true, true, true);
+                glDisable(GL_DEPTH_TEST);
+                if (Capabilities.INSTANCE.repFragTest) {
+                    glDisable(GL_REPRESENTATIVE_FRAGMENT_TEST_NV);
+                }
             }
         }
 

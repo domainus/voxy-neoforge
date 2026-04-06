@@ -10,8 +10,10 @@ import me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTra
 import me.cortex.voxy.client.core.rendering.hierachical.NodeCleaner;
 import me.cortex.voxy.client.core.rendering.post.FullscreenBlit;
 import me.cortex.voxy.client.core.rendering.section.backend.AbstractSectionRenderer;
+import me.cortex.voxy.client.core.rendering.section.geometry.BasicSectionGeometryData;
 import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
+import me.cortex.voxy.client.core.util.GPUTiming;
 import me.cortex.voxy.common.util.TrackedObject;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL30;
@@ -89,6 +91,9 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     protected abstract int setup(Viewport<?> viewport, int sourceFramebuffer, int srcWidth, int srcHeight);
     protected abstract void postOpaquePreTranslucent(Viewport<?> viewport);
+    protected boolean shouldRenderTemporal(Viewport<?> viewport) {
+        return true;
+    }
     protected void finish(Viewport<?> viewport, int sourceFrameBuffer, int srcWidth, int srcHeight) {
         glDisable(GL_STENCIL_TEST);
         glBindFramebuffer(GL_FRAMEBUFFER, sourceFrameBuffer);
@@ -98,21 +103,32 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         int depthTexture = this.setup(viewport, sourceFrameBuffer, srcWidth, srcHeight);
 
         var rs = ((AbstractSectionRenderer)this.sectionRenderer);
+        GPUTiming.INSTANCE.marker();
         rs.renderOpaque(viewport);
         var occlusionDebug = VoxyClient.getOcclusionDebugState();
         if (occlusionDebug==0) {
+            GPUTiming.INSTANCE.marker();
             this.innerPrimaryWork(viewport, depthTexture);
+            GPUTiming.INSTANCE.marker();
         }
+
         if (occlusionDebug<=1) {
+            TimingStatistics.G.start();
             rs.buildDrawCalls(viewport);
+            TimingStatistics.G.stop();
         }
-        rs.renderTemporal(viewport);
+
+        if (this.shouldRenderTemporal(viewport)) {
+            rs.renderTemporal(viewport);
+        }
 
         this.postOpaquePreTranslucent(viewport);
+        GPUTiming.INSTANCE.marker();
 
         if (!this.deferTranslucency) {
             rs.renderTranslucent(viewport);
         }
+        GPUTiming.INSTANCE.marker();
 
         this.finish(viewport, sourceFrameBuffer, srcWidth, srcHeight);
         glBindFramebuffer(GL_FRAMEBUFFER, sourceFrameBuffer);
@@ -128,7 +144,6 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         int depthTexture = glGetNamedFramebufferAttachmentParameteri(sourceFrameBuffer, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
         glBindTextureUnit(0, depthTexture);
         glBindSampler(0, DEPTH_SAMPLER);
-        glUniform2f(1,((float)width)/srcWidth, ((float)height)/srcHeight);
         glColorMask(false,false,false,false);
         this.depthCopy.blit();
 
@@ -167,7 +182,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     }
 
     private static final long SCRATCH = MemoryUtil.nmemAlloc(4*4*4);
-    protected static void transformBlitDepth(FullscreenBlit blitShader, int srcDepthTex, int dstFB, Viewport<?> viewport, Matrix4f targetTransform) {
+    public static void transformBlitDepth(FullscreenBlit blitShader, int srcDepthTex, int dstFB, Viewport<?> viewport, Matrix4f targetTransform) {
         // at this point the dst frame buffer doesn't have a stencil attachment so we don't need to keep the stencil test on for the blit
         // in the worst case the dstFB does have a stencil attachment causing this pass to become 'corrupted'
         glDisable(GL_STENCIL_TEST);
@@ -203,7 +218,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             this.nodeManager.tick(this.traversal.getNodeBuffer(), this.nodeCleaner);
             //glFlush();
 
-            this.nodeCleaner.tick(this.traversal.getNodeBuffer());//Probably do this here??
+            this.nodeCleaner.tick(this.traversal.getNodeBuffer(), viewport);//Probably do this here??
 
             TimingStatistics.dynamic.stop();
             TimingStatistics.main.start();
@@ -224,6 +239,13 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         this.depthSetBlit.delete();
         this.depthCopy.delete();
         super.free0();
+    }
+
+    public int getSectionCount() {
+        if (this.sectionRenderer == null) return -1;
+        var gm = this.sectionRenderer.getGeometryManager();
+        if (gm instanceof BasicSectionGeometryData bsg) return bsg.getSectionCount();
+        return -1;
     }
 
     public void addDebug(List<String> debug) {

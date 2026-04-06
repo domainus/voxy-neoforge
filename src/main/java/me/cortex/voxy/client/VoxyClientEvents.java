@@ -1,11 +1,16 @@
 package me.cortex.voxy.client;
 
 import me.cortex.voxy.client.config.VoxyConfig;
+import me.cortex.voxy.client.config.VoxyNeoForgeConfig;
+import me.cortex.voxy.client.hud.VoxyLoadingHud;
+import me.cortex.voxy.client.compat.IrisCompatManager;
 import net.minecraft.client.renderer.FogRenderer;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.ViewportEvent;
+import net.neoforged.neoforge.event.GameShuttingDownEvent;
 
 /**
  * Client event handlers for Voxy on NeoForge.
@@ -28,10 +33,16 @@ public class VoxyClientEvents {
      */
     @SubscribeEvent
     public static void onRenderFog(ViewportEvent.RenderFog event) {
+        // Do not override fog while a shader pack is active.
+        // Shader packs manage fog/cloud composition internally; forcing far fog here
+        // can cause skybox/cloud artifacts during camera movement.
+        if (IrisCompatManager.isShaderPackEnabled()) {
+            return;
+        }
         // Only modify terrain fog when Voxy is enabled and rendering
         if (event.getMode() == FogRenderer.FogMode.FOG_TERRAIN
-                && VoxyConfig.CONFIG.enabled
-                && VoxyConfig.CONFIG.enableRendering) {
+                && VoxyConfig.CONFIG.isEnabled()
+                && VoxyNeoForgeConfig.isRenderingEnabled()) {
 
             // Push fog to very large values (not MAX_VALUE to avoid shader math issues)
             // This removes the fog wall at vanilla render distance
@@ -41,5 +52,23 @@ public class VoxyClientEvents {
             // MUST cancel for changes to take effect (per NeoForge docs)
             event.setCanceled(true);
         }
+    }
+
+    /**
+     * Save config when the game is shutting down.
+     * This ensures settings changed during the session are always persisted,
+     * not just when the user explicitly clicks Apply in the options screen.
+     */
+    @SubscribeEvent
+    public static void onGameShuttingDown(GameShuttingDownEvent event) {
+        VoxyNeoForgeConfig.save();
+    }
+
+    @SubscribeEvent
+    public static void onRenderGuiPost(RenderGuiEvent.Post event) {
+        if (!VoxyConfig.CONFIG.isEnabled() || !VoxyNeoForgeConfig.isRenderingEnabled()) {
+            return;
+        }
+        VoxyLoadingHud.INSTANCE.render(event.getGuiGraphics(), event.getPartialTick());
     }
 }

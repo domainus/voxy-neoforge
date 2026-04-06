@@ -2,10 +2,9 @@ package me.cortex.voxy.client.mixin.minecraft;
 
 import me.cortex.voxy.client.VoxyClientInstance;
 import me.cortex.voxy.client.config.VoxyConfig;
+import me.cortex.voxy.client.compat.IrisCompatManager;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
-// MC 1.21.1 NeoForge: Iris shader integration excluded
-// import me.cortex.voxy.client.core.util.IrisUtil;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.commonImpl.VoxyCommon;
@@ -30,11 +29,12 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
         return this.renderer;
     }
 
-    @Inject(method = "allChanged()V", at = @At("RETURN"), order = 900)//We want to inject before sodium
+    @Inject(method = "allChanged()V", at = @At("RETURN"), order = 900)//We want to inject before embeddium
     private void reloadVoxyRenderer(CallbackInfo ci) {
-        this.shutdownRenderer();
         if (this.level != null) {
-            this.createRenderer();
+            // allChanged() can fire multiple times during shader/dimension transitions.
+            // Route through the debounced scheduler to avoid teardown/recreate storms.
+            VoxyRenderSystem.scheduleRendererRecreate("LevelRenderer#allChanged");
         }
     }
 
@@ -53,15 +53,16 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
     @Override
     public void shutdownRenderer() {
         if (this.renderer != null) {
-            this.renderer.shutdown();
+            VoxyRenderSystem old = this.renderer;
             this.renderer = null;
+            old.shutdown();
         }
     }
 
     @Override
     public void createRenderer() {
         if (this.renderer != null) throw new IllegalStateException("Cannot have multiple renderers");
-        if (!VoxyConfig.CONFIG.enabled) {
+        if (!VoxyConfig.CONFIG.isEnabled()) {
             Logger.info("Not creating renderer due to disabled");
             return;
         }
@@ -86,9 +87,8 @@ public abstract class MixinLevelRenderer implements IGetVoxyRenderSystem {
         try {
             this.renderer = new VoxyRenderSystem(world, instance.getServiceManager());
         } catch (RuntimeException e) {
-            // MC 1.21.1 NeoForge: Iris shader integration excluded - irisShaderPackEnabled() returns false
-            if (false) {
-                // IrisUtil.disableIrisShaders();
+            if (IrisCompatManager.isShaderPackEnabled()) {
+                IrisCompatManager.disableShaders();
             } else {
                 throw e;
             }

@@ -37,14 +37,18 @@ public class MixinIrisRenderingPipeline implements IGetVoxyPatchData, IGetIrisVo
     @Inject(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/irisshaders/iris/pipeline/IrisRenderingPipeline;createSetupComputes([Lnet/irisshaders/iris/shaderpack/programs/ComputeSource;Lnet/irisshaders/iris/shaderpack/programs/ProgramSet;Lnet/irisshaders/iris/shaderpack/texture/TextureStage;)[Lnet/irisshaders/iris/gl/program/ComputeProgram;"))
     private void voxy$injectPipeline(ProgramSet programSet, CallbackInfo ci) {
         if (this.patchData != null) {
-            this.pipeline = IrisVoxyRenderPipelineData.buildPipeline((IrisRenderingPipeline)(Object)this, this.patchData, this.customUniforms, this.shaderStorageBufferHolder);
+            this.pipeline = IrisVoxyRenderPipelineData.buildPipeline((IrisRenderingPipeline)(Object)this, this.patchData, this.customUniforms, this.shaderStorageBufferHolder, programSet.getPack().getIdMap());
         }
     }
 
-    @Inject(method = "beginLevelRendering", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_activeTexture(I)V", shift = At.Shift.BEFORE), remap = false)
+    @Inject(method = "beginLevelRendering", at = @At("HEAD"), remap = false, require = 0)
     private void voxy$injectViewportSetup(CallbackInfo ci) {
+        var mc = Minecraft.getInstance();
+        if (mc == null || !(mc.levelRenderer instanceof IGetVoxyRenderSystem iGetVrs)) {
+            return;
+        }
         if (IrisUtil.CAPTURED_VIEWPORT_PARAMETERS != null) {
-            var renderer = ((IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer).getVoxyRenderSystem();
+            var renderer = iGetVrs.getVoxyRenderSystem();
             if (renderer != null) {
                 IrisUtil.CAPTURED_VIEWPORT_PARAMETERS.apply(renderer);
             }

@@ -19,7 +19,8 @@ import java.util.Arrays;
 public class RenderDataFactory {
     private static final boolean BUILD_OCCUPANCY_SET = false;
 
-    private static final boolean CHECK_NEIGHBOR_FACE_OCCLUSION = true;
+    private static final boolean CHECK_NEIGHBOR_FACE_OCCLUSION =
+            System.getProperty("voxy.checkNeighborFaceOcclusion", "true").equalsIgnoreCase("true");
     private static final boolean DISABLE_CULL_SAME_OCCLUDES = false;//TODO: FIX TRANSLUCENTS (e.g. stained glass) breaking on chunk boarders with this set to false (it might be something else????)
 
     private static final boolean VERIFY_MESHING = VoxyCommon.isVerificationFlagOn("verifyMeshing");
@@ -48,7 +49,7 @@ public class RenderDataFactory {
     //TODO: emit directly to memory buffer instead of long arrays
 
     //Each axis gets a max quad count of 2^16 (65536 quads) since that is the max the basic geometry manager can handle
-    private final MemoryBuffer quadBuffer = new MemoryBuffer(8*(8*(1<<16)));//6 faces + dual direction + translucents
+    private final MemoryBuffer quadBuffer = new MemoryBuffer(8L * (8 * (1 << 16)));//6 faces + dual direction + translucents; 8 bytes per quad (ivec2)
     private final long quadBufferPtr = this.quadBuffer.address;
     private final int[] quadCounters = new int[8];
 
@@ -145,7 +146,8 @@ public class RenderDataFactory {
 
 
             int bufferIdx = type+(type==2?face:0);//Translucent, double side, directional
-            long bufferOffset = (RenderDataFactory.this.quadCounters[bufferIdx]++)*8L + bufferIdx*8L*(1<<16);
+            long bufferOffset = (long) (RenderDataFactory.this.quadCounters[bufferIdx]++) * 8L
+                    + (long) bufferIdx * 8L * (1 << 16);
             MemoryUtil.memPutLong(RenderDataFactory.this.quadBufferPtr + bufferOffset, quad);
 
 
@@ -1680,13 +1682,17 @@ public class RenderDataFactory {
         }
 
         int[] offsets = new int[8];
-        var buff = new MemoryBuffer(this.quadCount * 8L);
+        var buff = new MemoryBuffer((long) this.quadCount * 8L);
         long ptr = buff.address;
         int coff = 0;
         for (int buffer = 0; buffer < 8; buffer++) {// translucent, double sided quads, 6 faces
             offsets[buffer] = coff;
             int size = this.quadCounters[buffer];
-            UnsafeUtil.memcpy(this.quadBufferPtr + (buffer*(8*(1<<16))), ptr + coff*8L, (size* 8L));
+            UnsafeUtil.memcpy(
+                    this.quadBufferPtr + ((long) buffer * 8L * (1 << 16)),
+                    ptr + (long) coff * 8L,
+                    (long) size * 8L
+            );
             coff += size;
         }
 

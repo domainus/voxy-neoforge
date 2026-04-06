@@ -24,9 +24,20 @@ import static org.lwjgl.opengl.GL31.GL_UNIFORM_BUFFER;
 import static org.lwjgl.opengl.GL45C.*;
 
 public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
-    private final IrisVoxyRenderPipelineData data;
-    private final FullscreenBlit depthBlit = new FullscreenBlit("voxy:post/blit_texture_depth_cutout.frag");
+    private static final boolean ENABLE_IRIS_TEMPORAL_PASS =
+            System.getProperty("voxy.irisTemporalPass", "false").equalsIgnoreCase("true");
+    // Depth bridging into vanilla can occlude late translucent effects (clouds/particles/aurora)
+    // with distant LOD depth. Keep it opt-in for shader-pack stability.
+    private static final boolean COPY_DEPTH_TO_VANILLA =
+            System.getProperty("voxy.copyDepthToVanilla", "false").equalsIgnoreCase("true");
+    // If depth bridge is enabled, choose which LOD depth buffer to export.
+    private static final boolean COPY_TRANSLUCENT_DEPTH_TO_VANILLA =
+            System.getProperty("voxy.copyTranslucentDepthToVanilla", "false").equalsIgnoreCase("true");
+
+    final IrisVoxyRenderPipelineData data;
+    final FullscreenBlit depthBlit = new FullscreenBlit("voxy:post/blit_texture_depth_cutout.frag");
     public final DepthFramebuffer fbTranslucent = new DepthFramebuffer(this.fb.getFormat());
+    private final int fallbackDepthTextureId;
 
     private final GlBuffer shaderUniforms;
 
@@ -57,6 +68,7 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
 
         this.fb.framebuffer.verify();
         this.fbTranslucent.framebuffer.verify();
+        this.fallbackDepthTextureId = createFallbackDepthTexture();
 
         if (data.getUniforms() != null) {
             this.shaderUniforms = new GlBuffer(data.getUniforms().size());
@@ -79,12 +91,35 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
 
         this.depthBlit.delete();
         this.fbTranslucent.free();
+        glDeleteTextures(this.fallbackDepthTextureId);
 
         if (this.shaderUniforms != null) {
             this.shaderUniforms.free();
         }
 
         super.free0();
+    }
+
+    public int getFallbackDepthTextureId() {
+        return this.fallbackDepthTextureId;
+    }
+
+    private static int createFallbackDepthTexture() {
+        // Must match AbstractRenderPipeline.fb format (GL_DEPTH24_STENCIL8) so the sampler
+        // type is consistent when the pipeline switches from fallback to the real depth texture.
+        int texture = glCreateTextures(GL_TEXTURE_2D);
+        glTextureStorage2D(texture, 1, GL_DEPTH24_STENCIL8, 1, 1);
+        glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        // Clear via a temporary FBO — GL_DEPTH24_STENCIL8 requires glClearNamedFramebufferfi,
+        // matching the same clear path used by DepthFramebuffer for the real depth buffers.
+        int fbo = glCreateFramebuffers();
+        glNamedFramebufferTexture(fbo, GL_DEPTH_STENCIL_ATTACHMENT, texture, 0);
+        glClearNamedFramebufferfi(fbo, GL_DEPTH_STENCIL, 0, 1.0f, 0);
+        glDeleteFramebuffers(fbo);
+        return texture;
     }
 
     @Override
@@ -135,11 +170,22 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
     }
 
     @Override
+    protected boolean shouldRenderTemporal(Viewport<?> viewport) {
+        // The temporal bridge can create persistent overlay artifacts in shader-pack pipelines.
+        // Keep it opt-in for Iris until a dedicated DH-native temporal path is implemented.
+        return ENABLE_IRIS_TEMPORAL_PASS;
+    }
+
+    @Override
     protected void finish(Viewport<?> viewport, int sourceFrameBuffer, int srcWidth, int srcHeight) {
-        if (this.data.renderToVanillaDepth && srcWidth == viewport.width  && srcHeight == viewport.height) {//We can only depthblit out if destination size is the same
+        if (COPY_DEPTH_TO_VANILLA && this.data.renderToVanillaDepth
+                && srcWidth == viewport.width  && srcHeight == viewport.height) {//We can only depthblit out if destination size is the same
             glColorMask(false, false, false, false);
+            int depthSourceTex = COPY_TRANSLUCENT_DEPTH_TO_VANILLA
+                    ? this.fbTranslucent.getDepthTex().id
+                    : this.fb.getDepthTex().id;
             AbstractRenderPipeline.transformBlitDepth(this.depthBlit,
-                    this.fbTranslucent.getDepthTex().id, sourceFrameBuffer,
+                    depthSourceTex, sourceFrameBuffer,
                     viewport, new Matrix4f(viewport.vanillaProjection).mul(viewport.modelView));
             glColorMask(true, true, true, true);
         } else {
@@ -162,25 +208,42 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
         }
     }
 
-    private void doBindings() {
+    /**
+     * Returns true if bindings succeeded; false if Iris RenderTargets were already destroyed
+     * (happens during a mid-render shader-pack reload — caller should skip rendering this frame).
+     */
+    private boolean doBindings() {
         this.bindUniforms();
-        if (this.data.getSsboSet() != null) {
-            this.data.getSsboSet().bindingFunction().accept(10);
+        try {
+            if (this.data.getSsboSet() != null) {
+                this.data.getSsboSet().bindingFunction().accept(10);
+            }
+            if (this.data.getImageSet() != null) {
+                this.data.getImageSet().bindingFunction().accept(6);
+            }
+        } catch (IllegalStateException e) {
+            if (e.getMessage() != null && e.getMessage().contains("destroyed RenderTargets")) {
+                // Iris destroyed its RenderTargets during a pipeline rebuild while Voxy was mid-render.
+                // Schedule a deferred renderer recreate so Voxy can bind against the new Iris pipeline data.
+                me.cortex.voxy.common.Logger.warn("[IrisVoxyRenderPipeline] Iris RenderTargets destroyed mid-render — skipping frame");
+                VoxyRenderSystem.scheduleRendererRecreate("destroyed RenderTargets during bind");
+                return false;
+            }
+            throw e;
         }
-        if (this.data.getImageSet() != null) {
-            this.data.getImageSet().bindingFunction().accept(6);
-        }
+        return true;
     }
+
     @Override
     public void setupAndBindOpaque(Viewport<?> viewport) {
         this.fb.bind();
-        this.doBindings();
+        if (!this.doBindings()) return; // RenderTargets destroyed — skip this frame
     }
 
     @Override
     public void setupAndBindTranslucent(Viewport<?> viewport) {
         this.fbTranslucent.bind();
-        this.doBindings();
+        if (!this.doBindings()) return; // RenderTargets destroyed — skip this frame
         if (this.data.getBlender() != null) {
             this.data.getBlender().run();
         }
@@ -189,10 +252,16 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
     @Override
     public void addDebug(List<String> debug) {
         debug.add("Using: " + this.getClass().getSimpleName());
+        debug.add("Iris temporal pass: " + (ENABLE_IRIS_TEMPORAL_PASS ? "enabled" : "disabled"));
+        debug.add("Iris GLSL compat fixes: " + IrisGlslCompat.mode());
+        debug.add("Iris depth bridge: " + (COPY_DEPTH_TO_VANILLA
+                ? (COPY_TRANSLUCENT_DEPTH_TO_VANILLA ? "translucent" : "opaque-only")
+                : "disabled"));
         super.addDebug(debug);
     }
 
     private static final int UNIFORM_BINDING_POINT = 5;//TODO make ths binding point... not randomly 5
+    private boolean headerLogged = false;
 
     private StringBuilder buildGenericShaderHeader(AbstractSectionRenderer<?, ?> renderer, String input) {
         StringBuilder builder = new StringBuilder(input).append("\n\n\n");
@@ -204,27 +273,68 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
         }
 
         if (this.data.getSsboSet() != null) {
-            builder.append("#define BUFFER_BINDING_INDEX_BASE 10\n");//TODO: DONT RANDOMLY MAKE THIS 10
+            // Note: SSBO layout uses literal binding indices (not macro) to avoid NVIDIA C1154.
             builder.append(this.data.getSsboSet().layout()).append("\n\n");
         }
 
         if (this.data.getImageSet() != null) {
-            builder.append("#define BASE_SAMPLER_BINDING_INDEX 6\n");//TODO: DONT RANDOMLY MAKE THIS 6
+            // Note: sampler layout uses literal binding indices (not macro) to avoid NVIDIA C1154.
             builder.append(this.data.getImageSet().layout()).append("\n\n");
         }
 
-        return builder.append("\n\n");
+        var result = builder.append("\n\n");
+        if (!this.headerLogged) {
+            this.headerLogged = true;
+            // Extract just the appended header portion (everything after the base input)
+            String header = result.toString().substring(input.length());
+            me.cortex.voxy.common.Logger.info("[IrisVoxyRenderPipeline] shader header injected (first call):\n" + header.trim());
+        }
+        return result;
     }
 
 
+
+    /**
+     * Apply compatibility fixups to the combined shader source string.
+     * Called after all patch sources are appended so included-file content is also covered.
+     */
+    private static String applyGlslCompatFixes(String source) {
+        if (source == null) return null;
+        if (!IrisGlslCompat.shouldApplyFixes(source)) return source;
+        // shadow2D() was removed in GLSL 1.40; replace with texture() which is the modern equivalent.
+        // This handles packs like BSL whose included lighting libs still use the deprecated form.
+        return IrisGlslCompat.applyFixes(source);
+    }
+
+    private boolean opaquePatchLogged = false;
+    private boolean translucentPatchLogged = false;
+    private boolean glslCompatLogPrinted = false;
 
     @Override
     public String patchOpaqueShader(AbstractSectionRenderer<?, ?> renderer, String input) {
         var builder = this.buildGenericShaderHeader(renderer, input);
 
-        builder.append(this.data.opaqueFragPatch());
+        String opaquePatch = this.data.opaqueFragPatch();
+        if (this.data.getImageSet() != null) {
+            // Inject layout(binding=N) into sampler declarations already in the patch source
+            // to avoid conflicting re-declarations (NVIDIA: "declaration conflicts with previous declaration").
+            opaquePatch = this.data.getImageSet().applyBindingsToSource(opaquePatch);
+        }
+        builder.append(opaquePatch);
 
-        return builder.toString();
+        String source = builder.toString();
+        boolean compatFixesApplied = IrisGlslCompat.shouldApplyFixes(source);
+        String result = applyGlslCompatFixes(source);
+        if (compatFixesApplied && !this.glslCompatLogPrinted) {
+            this.glslCompatLogPrinted = true;
+            me.cortex.voxy.common.Logger.warn("[IrisVoxyRenderPipeline] GLSL compatibility rewrites active (mode=" + IrisGlslCompat.mode() + ", shadow2D/shadow2DLod replacement)");
+        }
+        if (!this.opaquePatchLogged) {
+            this.opaquePatchLogged = true;
+            String snippet = result != null && result.length() > 3000 ? result.substring(0, 3000) + "\n...[truncated, total len=" + result.length() + "]" : result;
+            me.cortex.voxy.common.Logger.info("[IrisVoxyRenderPipeline] patchOpaqueShader assembled (first call, len=" + (result == null ? "null" : result.length()) + "):\n" + snippet);
+        }
+        return result;
     }
 
     @Override
@@ -232,8 +342,18 @@ public class IrisVoxyRenderPipeline extends AbstractRenderPipeline {
         if (this.data.translucentFragPatch() == null) return null;
 
         var builder = this.buildGenericShaderHeader(renderer, input);
-        builder.append(this.data.translucentFragPatch());
-        return builder.toString();
+        String translucentPatch = this.data.translucentFragPatch();
+        if (this.data.getImageSet() != null) {
+            translucentPatch = this.data.getImageSet().applyBindingsToSource(translucentPatch);
+        }
+        builder.append(translucentPatch);
+        String result = applyGlslCompatFixes(builder.toString());
+        if (!this.translucentPatchLogged) {
+            this.translucentPatchLogged = true;
+            String snippet = result != null && result.length() > 2000 ? result.substring(0, 2000) + "\n...[truncated, total len=" + result.length() + "]" : result;
+            me.cortex.voxy.common.Logger.info("[IrisVoxyRenderPipeline] patchTranslucentShader assembled (first call, len=" + (result == null ? "null" : result.length()) + "):\n" + snippet);
+        }
+        return result;
     }
 
     @Override

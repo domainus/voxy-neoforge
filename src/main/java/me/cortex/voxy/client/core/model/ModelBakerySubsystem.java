@@ -1,13 +1,13 @@
 package me.cortex.voxy.client.core.model;
 
 
-import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.world.other.Mapper;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 
 import static org.lwjgl.opengl.GL11.glGetInteger;
 import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER;
@@ -32,8 +32,12 @@ public class ModelBakerySubsystem {
         this.processingThread = new Thread(()->{//TODO replace this with something good/integrate it into the async processor so that we just have less threads overall
             while (this.isRunning) {
                 this.factory.processAllThings();
+                // Sleep less when there's a large backlog (initial world load with many block states).
+                // Drops to 1ms during heavy load so baked textures are available sooner,
+                // reducing IdNotYetComputedException retries in RenderGenerationService.
+                int sleepMs = this.blockIdCount.get() > 20 ? 1 : 10;
                 try {
-                    Thread.sleep(10);
+                    Thread.sleep(sleepMs);
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
@@ -43,6 +47,10 @@ public class ModelBakerySubsystem {
     }
 
     public void tick(long totalBudget) {
+        this.tick(totalBudget, -1);
+    }
+
+    public void tick(long totalBudget, int framebufferBindingHint) {
         long start = System.nanoTime();
         this.factory.tickAndProcessUploads();
         //Always do 1 iteration minimum
@@ -50,12 +58,15 @@ public class ModelBakerySubsystem {
         if (i != null) {
             int j = 0;
             if (i != null) {
-                int fbBinding = glGetInteger(GL_FRAMEBUFFER_BINDING);
+                int fbBinding = framebufferBindingHint >= 0 ? framebufferBindingHint : glGetInteger(GL_FRAMEBUFFER_BINDING);
 
                 do {
                     this.factory.addEntry(i);
                     j++;
-                    if (4<j&&(totalBudget<(System.nanoTime() - start)+50_000))//20<j||
+                    // Process a small guaranteed batch, scaled by available frame budget.
+                    // This prevents excessive render-thread spikes when frame time is already tight.
+                    int minBlocks = totalBudget >= 1_500_000L ? 8 : (totalBudget >= 700_000L ? 4 : 2);
+                    if (minBlocks < j && (totalBudget < (System.nanoTime() - start) + 50_000))
                         break;
                     i = this.blockIdQueue.poll();
                 } while (i != null);
@@ -80,20 +91,37 @@ public class ModelBakerySubsystem {
         this.storage.free();
     }
 
-    //This is on this side only and done like this as only worker threads call this code
-    private final ReentrantLock seenIdsLock = new ReentrantLock();
-    private final IntOpenHashSet seenIds = new IntOpenHashSet(6000);//TODO: move to a lock free concurrent hashmap
+    // Lock-free set of block IDs that have been seen (queued or baked).
+    // ConcurrentHashMap.newKeySet() gives lock-free add/contains/remove without serializing
+    // all worker threads on a single ReentrantLock during initial load with thousands of IDs.
+    private final Set<Integer> seenIds = ConcurrentHashMap.newKeySet(6000);
+    private final ConcurrentHashMap<Integer, Long> nextRequeueMs = new ConcurrentHashMap<>();
+    private static final long REQUEUE_COOLDOWN_MS = 3_000L;
     public void requestBlockBake(int blockId) {
         if (this.mapper.getBlockStateCount() < blockId) {
             Logger.error("Error, got bakeing request for out of range state id. StateId: " + blockId + " max id: " + this.mapper.getBlockStateCount(), new Exception());
             return;
         }
-        this.seenIdsLock.lock();
-        if (!this.seenIds.add(blockId)) {
-            this.seenIdsLock.unlock();
+        // Fast path: already baked
+        if (this.factory.hasModelForBlockId(blockId)) {
             return;
         }
-        this.seenIdsLock.unlock();
+        boolean isNew = this.seenIds.add(blockId);
+        if (!isNew) {
+            // Some states can remain unbaked for a while (dependency ordering/modpack quirks).
+            // Allow low-frequency re-queue with cooldown to avoid hot retry churn.
+            if (!this.factory.hasModelForBlockId(blockId)) {
+                long now = System.currentTimeMillis();
+                long next = this.nextRequeueMs.getOrDefault(blockId, 0L);
+                if (now >= next) {
+                    this.nextRequeueMs.put(blockId, now + REQUEUE_COOLDOWN_MS);
+                    this.blockIdQueue.add(blockId);
+                    this.blockIdCount.incrementAndGet();
+                }
+            }
+            return;
+        }
+        this.nextRequeueMs.remove(blockId);
         this.blockIdQueue.add(blockId);
         this.blockIdCount.incrementAndGet();
     }

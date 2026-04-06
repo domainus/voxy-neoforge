@@ -124,6 +124,81 @@ Usage examples:
 - BlockableEventLoop.isNonRecoverable() InvalidMixinException
 - Any @Shadow/@Inject targeting non-existent methods
 
+### perf_latest_summary.sh
+
+**Purpose:** Reads `latest.log` and summarizes the newest `VOXY_PERF` counters for upload pressure, async copy draining, and world section array reuse.
+
+**Usage:**
+```bash
+# Local latest.log in current directory
+bash scripts/perf_latest_summary.sh
+
+# Explicit path
+bash scripts/perf_latest_summary.sh /path/to/logs/latest.log
+```
+
+**Expected output sections:**
+- `[UPLOAD_STREAM]`
+  - `remaining_bytes`, `threshold_bytes`, `glfinish_stalls`, `backpressure_observations`
+- `[ASYNC_NODE]`
+  - `max_copy_batch`, `max_copy_dispatched_per_tick`, `pending_copy_remaining`, `copy_budget_per_tick`
+- `[WORLD_SECTION_CACHE]`
+  - `hit_pct`, `hits`, `misses`, `rejects`
+
+### voxy_log_triage.sh
+
+**Purpose:** Classifies Voxy warnings/perf signatures from a `latest.log` and prints actionable triage recommendations with implementation file mapping.
+
+**Usage:**
+```bash
+# Analyze a local latest.log
+bash scripts/voxy_log_triage.sh /path/to/latest.log
+
+# Example with pulled test log
+bash scripts/voxy_log_triage.sh .tmp/logs/latest-craftoria-aftertest.log
+```
+
+**What it summarizes:**
+- `Missing model summary` warnings (count + peak misses + peak unique IDs)
+- `Inflight request summary` warnings (deferred/suppressed/pending reruns peaks)
+- `Large amount of copies` warnings
+- `Failed to wait for gpu memory to be freed` warnings
+- `VOXY_PERF async_node` peaks (`max_copy_batch`, `pending_copy_remaining`, thresholds)
+- `VOXY_PERF upload_stream` peaks (`pending_copies`, `queued_frames`, backpressure, stalls)
+
+**Output sections:**
+- `Issue Summary`
+- `Peaks`
+- `Implementation Map` (points directly to source files)
+- `Recommended Actions`
+
+### voxy_churn_diagnose.sh
+
+**Purpose:** Low-noise diagnosis for flashing/reload behavior by focusing only on pipeline churn + chunk worker restarts + section transition churn.
+
+**Usage:**
+```bash
+# Auto-detect common latest.log locations
+bash scripts/voxy_churn_diagnose.sh
+
+# Explicit file + timeline size
+bash scripts/voxy_churn_diagnose.sh /path/to/latest.log 50
+```
+
+**What it reports:**
+- `iris_destroy_pipeline` / `iris_create_pipeline`
+- shader compile and pipeline-fail counts
+- `ChunkBuilder` stop/start counts
+- `[VoxyDiag] sectionTransitions` peaks:
+  - `builtToUnbuilt`, `unbuiltToBuilt`
+  - `chunkBoundAddQ`, `chunkBoundRemQ`, `chunkBoundTracked`
+- compact verdict flags:
+  - `shader_pipeline_unstable`
+  - `pipeline_rebuild_churn`
+  - `section_transition_churn`
+
+**Why use this over full triage:** It intentionally excludes broad mod noise and keeps only the signals tied to random LOD in/out flashing.
+
 ## Validation Workflow
 
 ### Before Creating New Mixin
@@ -135,8 +210,8 @@ find .reference/minecraft/1.21.1/decompiled -name "TargetClass.java"
 # 2. Verify method exists
 grep -A 10 "targetMethod" .reference/minecraft/1.21.1/decompiled/path/to/TargetClass.java
 
-# 3. Check Sodium's implementation
-grep -r "@Mixin.*TargetClass" .reference/sodium/
+# 3. Check Embeddium's implementation
+grep -r "@Mixin.*TargetClass" .reference/embeddium/
 ```
 
 ### After Modifying Mixin Configs

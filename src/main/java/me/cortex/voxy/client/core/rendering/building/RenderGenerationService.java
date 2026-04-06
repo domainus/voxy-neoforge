@@ -24,8 +24,12 @@ import java.util.function.Consumer;
 // and process accordingly
 public class RenderGenerationService {
     private static final int MAX_HOLDING_SECTION_COUNT = 1000;
+    private static final long RETRY_WINDOW_NANOS = 100_000_000L; // 100ms
+    private static final int RETRY_PRESSURE_LIMIT = 500;
 
-    public static final AtomicInteger MESH_FAILED_COUNTER = new AtomicInteger();
+    public static final AtomicInteger MESH_RETRY_COUNTER = new AtomicInteger();
+    // Backward-compat alias for existing debug callers.
+    public static final AtomicInteger MESH_FAILED_COUNTER = MESH_RETRY_COUNTER;
     private static final AtomicInteger COUNTER = new AtomicInteger();
     private static final class BuildTask {
         WorldSection section;
@@ -60,6 +64,7 @@ public class RenderGenerationService {
     private final boolean emitMeshlets;
 
     private final Service service;
+    private volatile long retryWindowStartNanos = System.nanoTime();
 
 
     /*
@@ -79,7 +84,20 @@ public class RenderGenerationService {
             return new Pair<>(() -> {
                 this.processJob(factory, seenMissed);
             }, factory::free);
-        }, 10, "Section mesh generation service", ()->modelBakery.getProcessingCount()<400||RenderGenerationService.MESH_FAILED_COUNTER.get()<500);
+        }, 10, "Section mesh generation service", ()->{
+            int modelBakeQueueCount = modelBakery.getProcessingCount();
+            if (modelBakeQueueCount>1000) return false;//Pause mesh gen if there is alot of model baking happening
+            this.rollRetryWindowIfNeeded();
+            return modelBakery.getProcessingCount()<400||RenderGenerationService.MESH_RETRY_COUNTER.get()<RETRY_PRESSURE_LIMIT;
+        });
+    }
+
+    private void rollRetryWindowIfNeeded() {
+        long now = System.nanoTime();
+        if ((now - this.retryWindowStartNanos) > RETRY_WINDOW_NANOS) {
+            MESH_RETRY_COUNTER.set(0);
+            this.retryWindowStartNanos = now;
+        }
     }
 
     public void setResultConsumer(Consumer<BuiltSection> consumer) {
@@ -209,13 +227,14 @@ public class RenderGenerationService {
                 }
 
                 if (task.hasDoneModelRequestOuter || task.hasDoneModelRequestInner) {
-                    MESH_FAILED_COUNTER.incrementAndGet();
+                    MESH_RETRY_COUNTER.incrementAndGet();
                 }
 
                 if (task.hasDoneModelRequestInner && task.hasDoneModelRequestOuter) {
                     task.attempts++;
+                    int retryBackoffMs = 1 << Math.min(task.attempts, 4); // 1,2,4,8,16
                     try {
-                        Thread.sleep(1);
+                        Thread.sleep(retryBackoffMs);
                     } catch (InterruptedException ex) {
                         throw new RuntimeException(ex);
                     }
@@ -279,7 +298,6 @@ public class RenderGenerationService {
             }
         }
     }
-
 
     public void enqueueTask(long pos) {
         if (!this.service.isLive()) {
@@ -353,13 +371,9 @@ public class RenderGenerationService {
         }
     }
 
-    private long lastChangedTime = 0;
     public void addDebugData(List<String> debug) {
-        if (System.currentTimeMillis()-this.lastChangedTime > 100) {
-            MESH_FAILED_COUNTER.set(0);
-            this.lastChangedTime = System.currentTimeMillis();
-        }
-        debug.add("RSSQ/TFC: " + this.taskQueueCount.get() + "/" + MESH_FAILED_COUNTER.get());//render section service queue, Task Fail Counter
+        this.rollRetryWindowIfNeeded();
+        debug.add("RSSQ/TRC: " + this.taskQueueCount.get() + "/" + MESH_RETRY_COUNTER.get());//render section service queue, Task Retry Counter
 
     }
 

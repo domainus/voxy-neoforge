@@ -22,8 +22,7 @@ import static org.lwjgl.opengl.GL33.*;
 
 public class IrisShaderPatch {
     public static final int VERSION = ((IntSupplier)()->1).getAsInt();
-
-    public static final boolean IMPERSONATE_DISTANT_HORIZONS = System.getProperty("voxy.impersonateDHShader", "false").equalsIgnoreCase("true");
+    public static final int SHADER_DEFINE_VERSION = 1;
 
 
     private static final class SSBODeserializer implements JsonDeserializer<Int2ObjectOpenHashMap<String>> {
@@ -302,10 +301,26 @@ public class IrisShaderPatch {
         };
     }
 
-    private static final Gson GSON = new GsonBuilder()
-            .excludeFieldsWithModifiers(Modifier.PRIVATE)
-            .setStrictness(Strictness.LENIENT)
-            .create();
+    private static final Gson GSON = createLenientGson();
+
+    private static Gson createLenientGson() {
+        GsonBuilder builder = new GsonBuilder()
+                .excludeFieldsWithModifiers(Modifier.PRIVATE);
+        try {
+            // Gson 2.11+
+            Class<?> strictness = Class.forName("com.google.gson.Strictness");
+            Object lenient = strictness.getField("LENIENT").get(null);
+            builder.getClass().getMethod("setStrictness", strictness).invoke(builder, lenient);
+        } catch (Throwable ignored) {
+            // Gson <=2.10 fallback
+            try {
+                builder.getClass().getMethod("setLenient").invoke(builder);
+            } catch (Throwable ignoredAgain) {
+                // Proceed with defaults
+            }
+        }
+        return builder.create();
+    }
 
     public static IrisShaderPatch makePatch(ShaderPack ipack, AbsolutePackPath directory, Function<AbsolutePackPath, String> sourceProvider) {
         String voxyPatchData = sourceProvider.apply(directory.resolve("voxy.json"));

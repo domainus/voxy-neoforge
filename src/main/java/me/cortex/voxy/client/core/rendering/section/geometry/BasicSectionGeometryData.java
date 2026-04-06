@@ -3,7 +3,6 @@ package me.cortex.voxy.client.core.rendering.section.geometry;
 import me.cortex.voxy.client.core.gl.Capabilities;
 import me.cortex.voxy.client.core.gl.GlBuffer;
 import me.cortex.voxy.common.Logger;
-import me.cortex.voxy.common.util.ThreadUtils;
 
 import static org.lwjgl.opengl.ARBSparseBuffer.*;
 import static org.lwjgl.opengl.GL11C.*;
@@ -12,6 +11,10 @@ import static org.lwjgl.opengl.GL15C.glBindBuffer;
 
 public class BasicSectionGeometryData implements IGeometryData {
     public static final int SECTION_METADATA_SIZE = 32;
+    private static final long GPU_RELEASE_WAIT_TIMEOUT_MS =
+            Long.getLong("voxy.gpuReleaseWaitTimeoutMs", 0L);
+    private static boolean gpuReleaseWaitSkipLogged = false;
+
     private final GlBuffer sectionMetadataBuffer;
     private final GlBuffer geometryBuffer;
 
@@ -21,8 +24,8 @@ public class BasicSectionGeometryData implements IGeometryData {
     public BasicSectionGeometryData(int maxSectionCount, long geometryCapacity) {
         this.maxSectionCount = maxSectionCount;
         this.sectionMetadataBuffer = new GlBuffer((long) maxSectionCount * SECTION_METADATA_SIZE);
-        //8 Cause a quad is 8 bytes
-        if ((geometryCapacity%8)!=0) {
+        //8 bytes per quad (ivec2)
+        if ((geometryCapacity % 8) != 0) {
             throw new IllegalStateException();
         }
         long start = System.currentTimeMillis();
@@ -66,7 +69,7 @@ public class BasicSectionGeometryData implements IGeometryData {
 
     private long sparseCommitment = 0;//Tracks the current range of the allocated sparse buffer
     public void ensureAccessable(int maxElementAccess) {
-        long size = (Integer.toUnsignedLong(maxElementAccess)*8L+65535L)&~65535L;
+        long size = (Integer.toUnsignedLong(maxElementAccess) * 8L + 65535L) & ~65535L;
         //If we are a sparse buffer, ensure the memory upto the requested size is allocated
         if (this.geometryBuffer.isSparse()) {
             if (this.sparseCommitment < size) {//if we try to access memory outside the allocation range, allocate it
@@ -127,17 +130,22 @@ public class BasicSectionGeometryData implements IGeometryData {
                 releaseSize = (long)(this.sparseCommitment*0.75);
             }
             if (Capabilities.INSTANCE.getFreeDedicatedGpuMemory()-gpuMemory<=releaseSize) {
-                Logger.info("Attempting to wait for gpu memory to release");
-                long start = System.currentTimeMillis();
-
-                long TIMEOUT = 2500;
-
-                while (System.currentTimeMillis() - start > TIMEOUT) {//Wait up to 2.5 seconds for memory to release
-                    glFinish();
-                    if (Capabilities.INSTANCE.getFreeDedicatedGpuMemory() - gpuMemory > releaseSize) break;
-                }
-                if (Capabilities.INSTANCE.getFreeDedicatedGpuMemory() - gpuMemory <= releaseSize) {
-                    Logger.warn("Failed to wait for gpu memory to be freed, this could indicate an issue with the driver");
+                if (GPU_RELEASE_WAIT_TIMEOUT_MS <= 0) {
+                    if (!gpuReleaseWaitSkipLogged) {
+                        gpuReleaseWaitSkipLogged = true;
+                        Logger.info("Skipping blocking gpu memory release wait (voxy.gpuReleaseWaitTimeoutMs=0)");
+                    }
+                } else {
+                    Logger.info("Attempting to wait for gpu memory to release");
+                    long start = System.currentTimeMillis();
+                    while (System.currentTimeMillis() - start < GPU_RELEASE_WAIT_TIMEOUT_MS) {
+                        glFinish();
+                        if (Capabilities.INSTANCE.getFreeDedicatedGpuMemory() - gpuMemory > releaseSize) break;
+                    }
+                    if (Capabilities.INSTANCE.getFreeDedicatedGpuMemory() - gpuMemory <= releaseSize) {
+                        Logger.warn("Failed to wait for gpu memory to be freed within timeout="
+                                + GPU_RELEASE_WAIT_TIMEOUT_MS + "ms, this could indicate a driver issue");
+                    }
                 }
             }
         }
